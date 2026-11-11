@@ -13,11 +13,13 @@ a partir de DUAS planilhas do Google Sheets (somente leitura):
     impressoes, alcance, cliques no link e Landing Page Views do gerenciador
     (Meta Ads), uma linha por dia x campanha x conjunto x anuncio.
 
-LINHAS DE TESTE: ate a linha LEADS_FIRST_ROW-1 (15) da planilha de leads so ha
-testes de UTM/formulario — o build IGNORA essas linhas (decisao do gestor).
+TESTES DE UTM: os cadastros ate o ultimo teste (10/11/2026 08:27:33 UTC — antiga
+linha 15 da planilha) sao testes de UTM/formulario — o build IGNORA tudo com
+"dia/horario" <= LEADS_START_UTC (decisao do gestor). O corte e por DATA/HORA, nao
+por numero de linha: as linhas de teste podem ser apagadas/reordenadas sem quebrar.
 
 LEAD VALIDO — ver lead_discard_reason():
-  1. linha da planilha >= LEADS_FIRST_ROW (16);
+  1. "dia/horario" preenchido e DEPOIS de LEADS_START_UTC;
   2. nome e telefone preenchidos (a LP nao coleta e-mail obrigatorio);
   3. nao e cadastro de teste (nome "Teste ...", pagina de teste/debug,
      URL local file://, utm_source de teste).
@@ -71,8 +73,10 @@ SPREADSHEET_ID_META = "1tBBVOSEOBeHrkHDPBMVB6W1Ot5zAN4E96m_GmzW9ojs"
 GID_META = "0"
 EXPORT_URL = "https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={gid}"
 
-# Linhas 2..15 da planilha de leads são só testes de UTM: o 1º lead real é a linha 16.
-LEADS_FIRST_ROW = 16
+# Testes de UTM: tudo até o último teste ("mariana", 2026-11-10T08:27:33.726Z — era a
+# linha 15 da planilha) é descartado. Corte por DATA/HORA (UTC), não por nº de linha,
+# porque as linhas de teste foram apagadas e o 1º lead real "subiu" para a linha 3.
+LEADS_START_UTC = datetime(2026, 11, 10, 8, 27, 34, tzinfo=timezone.utc)
 
 # Identificação do cliente/conta (usada só em textos/relatórios — não afeta o cruzamento de dados).
 CLIENT_NAME = "Dra. Taísa"
@@ -200,12 +204,11 @@ def parse_date(v: str) -> str | None:
     return None
 
 
-def parse_lead_date(v: str) -> str | None:
-    """Dia do lead no fuso da conta de anuncios (ACCOUNT_TZ).
+def lead_datetime(v: str) -> datetime | None:
+    """"dia/horario" do lead como datetime COM fuso (None se vazio/ilegível).
 
-    created_time vem em ISO com offset, ex.: "2026-08-31T07:56:55-03:00".
-    Convertemos para ACCOUNT_TZ antes de extrair o dia; sem offset, assume
-    LEADS_TZ. Devolve "YYYY-MM-DD"."""
+    Vem em ISO UTC, ex.: "2026-11-10T15:57:42.339Z"; com offset também serve.
+    Sem offset (ou dd/mm/aaaa hh:mm), assume LEADS_TZ."""
     if not v:
         return None
     s = str(v).strip()
@@ -215,20 +218,23 @@ def parse_lead_date(v: str) -> str | None:
         s = s[:-1] + "+00:00"
     try:
         dt = datetime.fromisoformat(s)
-        if dt.tzinfo is not None:
-            return dt.astimezone(ACCOUNT_TZ).strftime("%Y-%m-%d")
-        return dt.replace(tzinfo=LEADS_TZ).astimezone(ACCOUNT_TZ).strftime("%Y-%m-%d")
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=LEADS_TZ)
     except ValueError:
         pass
     s2 = re.sub(r"\s+", " ", s)
     for fmt in ("%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y",
                 "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
         try:
-            dt = datetime.strptime(s2, fmt)
+            return datetime.strptime(s2, fmt).replace(tzinfo=LEADS_TZ)
         except ValueError:
             continue
-        return dt.replace(tzinfo=LEADS_TZ).astimezone(ACCOUNT_TZ).strftime("%Y-%m-%d")
-    return parse_date(s)
+    return None
+
+
+def parse_lead_date(v: str) -> str | None:
+    """Dia do lead ("YYYY-MM-DD") no fuso da conta de anuncios (ACCOUNT_TZ)."""
+    dt = lead_datetime(v)
+    return dt.astimezone(ACCOUNT_TZ).strftime("%Y-%m-%d") if dt else None
 
 
 # --------------------------------------------------------------------------- #
@@ -259,11 +265,13 @@ def is_test_lead(name: str, email: str, pagina: str = "", url: str = "", utm_sou
     return False
 
 
-def lead_discard_reason(sheet_row: int, name: str, email: str, phone: str,
+def lead_discard_reason(created: datetime | None, name: str, email: str, phone: str,
                         pagina: str, url: str, utm_source: str) -> str | None:
     """None = lead válido. Senão, o motivo do descarte (para o log do build)."""
-    if sheet_row < LEADS_FIRST_ROW:
-        return "linhas_de_teste"
+    if created is None:
+        return "sem_data"
+    if created <= LEADS_START_UTC:
+        return "testes_utm"
     if not (name.strip() and phone.strip()):
         return "incompleto"
     if is_test_lead(name, email, pagina, url, utm_source):
@@ -304,7 +312,7 @@ def clean_utm(v: str) -> str:
     ({{adset.name}} — clique fora do anúncio/preview) e valores vazios."""
     s = (v or "").strip()
     try:
-        s = urllib.parse.unquote(s)
+        s = urllib.parse.unquote_plus(s)   # a LP grava espaço como "+" (AUTO+|+H+|+...)
     except Exception:
         pass
     s = s.strip()
@@ -461,10 +469,10 @@ def process(leads_rows, meta_rows):
     print(f"  [leads] colunas mapeadas: {lidx}", file=sys.stderr)
 
     leads = []
-    descartados = {"linhas_de_teste": 0, "incompleto": 0, "teste": 0}
+    descartados = {"testes_utm": 0, "sem_data": 0, "incompleto": 0, "teste": 0}
     sem_meta = 0
     organicos = 0
-    for i, row in enumerate(leads_rows[1:], start=2):   # i = nº da linha na planilha
+    for row in leads_rows[1:]:
         if not any((c or "").strip() for c in row):
             continue
         name = cell(row, lidx["name"])
@@ -473,7 +481,8 @@ def process(leads_rows, meta_rows):
         page = cell(row, lidx["page"])
         url = cell(row, lidx["url"])
         source = cell(row, lidx["source"])
-        why = lead_discard_reason(i, name, email, phone, page, url, source)
+        created = lead_datetime(cell(row, lidx["created"]))
+        why = lead_discard_reason(created, name, email, phone, page, url, source)
         if why:
             descartados[why] += 1
             continue
@@ -502,7 +511,7 @@ def process(leads_rows, meta_rows):
             organicos += 1
         placement = cell(row, lidx["term"])
         leads.append({
-            "d": parse_lead_date(cell(row, lidx["created"])),
+            "d": created.astimezone(ACCOUNT_TZ).strftime("%Y-%m-%d"),
             # "meta" = mídia paga (UTM do Meta) · "org" = orgânico / sem UTM
             "src": "meta" if paid else "org",
             "plat": pretty_platform(placement, source, paid),
@@ -633,8 +642,9 @@ def main():
     print(f"  leads      : {len(data['leads'])} válidos "
           f"({len(data['leads']) - b['leads_organicos']} mídia paga · {b['leads_organicos']} orgânicos/sem UTM)",
           file=sys.stderr)
-    print(f"  descartados: {d['linhas_de_teste']} nas linhas de teste (< {LEADS_FIRST_ROW}) · "
-          f"{d['incompleto']} incompletos · {d['teste']} de teste", file=sys.stderr)
+    print(f"  descartados: {d['testes_utm']} testes de UTM (até {LEADS_START_UTC:%d/%m/%Y %H:%M} UTC) · "
+          f"{d['sem_data']} sem dia/horário · {d['incompleto']} incompletos · {d['teste']} de teste",
+          file=sys.stderr)
     print(f"  sem mídia  : {b['leads_sem_meta']} lead(s) pago(s) cujo anúncio não aparece na aba de Queries",
           file=sys.stderr)
     print(f"  meta       : {len(data['meta'])} linhas · gasto R$ {sp:,.2f} "

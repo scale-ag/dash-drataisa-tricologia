@@ -33,7 +33,8 @@ Frequência, CTR, CPC, **CR** (Connect Rate = Page Views ÷ Cliques), **CPV**
    Routine do Claude ser criada — ver `CLAUDE.md`).
 
 ### Regra de LEAD VÁLIDO (`build/build.py` → `lead_discard_reason`)
-1. linha da planilha **≥ 16** (`LEADS_FIRST_ROW`) — as linhas 2–15 são testes de UTM;
+1. `dia/horario` **depois de 10/11/2026 08:27:34 UTC** (`LEADS_START_UTC`) — tudo até o último teste de UTM
+   (antiga linha 15) é descartado; o corte é por data/hora, não por nº de linha;
 2. **nome** e **telefone** preenchidos;
 3. não é teste (nome "Teste …", página `teste`/`debug`, URL `file://`, utm_source de teste).
 

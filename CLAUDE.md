@@ -10,7 +10,9 @@
 - **Modelo:** cópia de `scale-ag/dash-giaco-sdc-form7` (**Visão Geral · Meta Ads · Insights de IA** —
   ids internos `geral`/`meta`/`rel`), adaptada a **funil de landing page** (Page Views/CR/CPV/ConvLP).
 - **Leads:** planilha `1POUa1YFL4HnuWCt8ib3I4EYOQSBCQZWBSfasLRvQhHY`, aba `Tricologia - Pages`, gid `0`.
-  **Linhas 2–15 são testes de UTM** → `LEADS_FIRST_ROW = 16` (só entra da linha 16 em diante).
+  **Testes de UTM:** tudo com `dia/horario` ≤ `LEADS_START_UTC` (2026-11-10 08:27:34 UTC, logo após o último
+  teste — a antiga linha 15) é descartado. O corte é por **data/hora**, NÃO por nº de linha: as linhas de
+  teste foram apagadas em 11/11 e o 1º lead real "subiu" para a linha 3 (a regra antiga `linha ≥ 16` o descartava).
 - **Meta Ads:** planilha `1tBBVOSEOBeHrkHDPBMVB6W1Ot5zAN4E96m_GmzW9ojs`, aba `Queries Meta | Dra Taisa`, gid `0`.
   (A aba `Google Queries`, gid `1609119011`, existe mas não é usada.)
 - **Sem qualificação:** não há MQL, agendamentos, vendas, faturamento, CAC ou ROAS.
@@ -34,7 +36,7 @@ ConvLP (Leads ÷ Page Views) · CPL**.
 
 ## Regra de LEAD VÁLIDO (`build.py` → `lead_discard_reason`)
 
-1. linha da planilha ≥ `LEADS_FIRST_ROW` (16);
+1. `dia/horario` preenchido e **depois** de `LEADS_START_UTC` (senão: `sem_data` / `testes_utm`);
 2. `Nome` e `Telefone` preenchidos (a LP não exige e-mail);
 3. não é teste: 1ª palavra do nome `teste`/`test`, e-mail de domínio de teste,
    `Pagina`/`Utm_source` com `teste`/`test`/`debug`, `Url` começando com `file:`.
@@ -49,7 +51,7 @@ ConvLP (Leads ÷ Page Views) · CPL**.
 
 ### Casamento leads × Meta Ads
 `Utm_campaign`/`Utm_medium`/`Utm_content` == `Campaign Name`/`Ad Set Name`/`Ad Name`,
-comparados por `mkey()` (sem acento, minúsculo, `%XX` decodificado, `+`=espaço, espaços
+comparados por `mkey()` (sem acento, minúsculo, `%XX`/`+` decodificados — a LP grava `AUTO+|+H+|+…` —, espaços
 colapsados — o nome do conjunto tem espaço duplo, ex. `BAURU |  AD04`). Quando casa, o lead
 recebe o nome **canônico** do gerenciador. `trk=1` quando a tripla existe na aba de Queries
 (KPI "% Eficácia Rastr."). `Utm_term` (`{{placement}}`) → Plataforma e Posicionamento.
